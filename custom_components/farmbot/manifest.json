@@ -1,0 +1,13 @@
+{
+  "domain": "farmbot",
+  "name": "FarmBot",
+  "version": "0.1.0",
+  "codeowners": ["@maxvitek"],
+  "documentation": "https://github.com/maxvitek/ha-farmbot",
+  "iot_class": "cloud_polling",
+  "loggers": ["farmbot"],
+  "quality_scale": "bronze",
+  "requirements": ["farmbot>=2.0.0"],
+  "config_flow": true,
+  "integration_type": "hub"
+}

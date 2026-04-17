@@ -1,0 +1,23 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to FarmBot",
+        "description": "Enter your FarmBot web app credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "server": "Server URL"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to FarmBot server.",
+      "invalid_auth": "Invalid authentication credentials.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "FarmBot account is already configured."
+    }
+  }
+}

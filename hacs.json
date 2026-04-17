@@ -1,0 +1,7 @@
+{
+  "name": "FarmBot",
+  "render_readme": true,
+  "country": "US",
+  "homeassistant": "2024.6.0",
+  "domains": ["button", "sensor", "binary_sensor", "switch", "camera", "number"]
+}
