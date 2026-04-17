@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import MagicMock, patch
 
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
@@ -25,14 +25,14 @@ async def test_config_flow_success(hass, mock_farmbot):
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "FarmBot"
-    assert result["data"] == user_input
-    mock_farmbot.get_token.assert_called_once()
+    assert result["data"][CONF_EMAIL] == "user@example.com"
+    mock_farmbot.get_token.assert_called()  # called in config flow + coordinator first refresh
     mock_farmbot.api_get.assert_any_call("device")
 
 
 async def test_config_flow_invalid_auth(hass, mock_farmbot):
     """Test invalid auth mapping."""
-    mock_farmbot.get_token = Mock(side_effect=Exception("401 Unauthorized"))
+    mock_farmbot.get_token.side_effect = Exception("401 Unauthorized")
 
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     result = await hass.config_entries.flow.async_configure(

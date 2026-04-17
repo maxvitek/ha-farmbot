@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import farmbot
+from farmbot import Farmbot
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -17,14 +17,12 @@ from .const import CONF_SERVER, DEFAULT_SERVER, DOMAIN
 
 async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate user input allows us to connect."""
+    fb = Farmbot()
     token = await hass.async_add_executor_job(
-        farmbot.get_token,
-        data[CONF_EMAIL],
-        data[CONF_PASSWORD],
-        data[CONF_SERVER],
+        fb.get_token, data[CONF_EMAIL], data[CONF_PASSWORD], data[CONF_SERVER]
     )
-    await hass.async_add_executor_job(farmbot.set_token, token)
-    await hass.async_add_executor_job(farmbot.api_get, "device")
+    await hass.async_add_executor_job(fb.set_token, token)
+    await hass.async_add_executor_job(fb.api_get, "device")
     return {"title": "FarmBot"}
 
 
@@ -46,7 +44,7 @@ class FarmBotConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             try:
                 info = await _validate_input(self.hass, user_input)
-            except Exception as err:  # broad catch to map sync lib errors to flow errors
+            except Exception as err:
                 message = str(err).lower()
                 if any(term in message for term in ("401", "403", "unauthorized", "forbidden")):
                     errors["base"] = "invalid_auth"

@@ -1,0 +1,20 @@
+[project]
+name = "ha-farmbot"
+version = "0.1.0"
+description = "Home Assistant custom integration for FarmBot"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [{name = "Max Vitek", email = "maxvitek@gmail.com"}]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-homeassistant-custom-component>=0.13",
+    "pytest-aiohttp>=1.0",
+    "PyTurboJPEG>=1.7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -30,6 +30,11 @@ class FarmBotLatestImageCamera(FarmBotEntity, Camera):
     _attr_unique_id = f"{DOMAIN}_latest_image"
     _attr_name = "FarmBot Latest Image"
 
+    def __init__(self, coordinator) -> None:
+        """Initialize camera with both parent classes."""
+        FarmBotEntity.__init__(self, coordinator)
+        Camera.__init__(self)
+
     @property
     def is_on(self) -> bool:
         """Return true when a latest image URL is available."""

@@ -64,10 +64,8 @@ async def test_sequence_button_press_calls_sequence(hass, farmbot_credentials, m
     mock_farmbot.sequence.assert_any_call("Water Everything")
 
 
-async def test_find_home_action_button(hass, farmbot_credentials, mock_farmbot, aioclient_mock):
-    """Test built-in Find Home button sends celery_script command."""
-    aioclient_mock.post("https://my.farm.bot/api/celery_script", status=200)
-
+async def test_find_home_action_button(hass, farmbot_credentials, mock_farmbot):
+    """Test built-in Find Home button calls find_home on Farmbot instance."""
     await setup_integration(hass, farmbot_credentials)
 
     await hass.services.async_call(
@@ -77,13 +75,11 @@ async def test_find_home_action_button(hass, farmbot_credentials, mock_farmbot, 
         blocking=True,
     )
 
-    assert aioclient_mock.mock_calls
+    mock_farmbot.find_home.assert_called()
 
 
-async def test_switch_and_number_actions(hass, farmbot_credentials, mock_farmbot, aioclient_mock):
-    """Test peripheral switch write and coordinate move number."""
-    aioclient_mock.post("https://my.farm.bot/api/celery_script", status=200)
-
+async def test_switch_and_number_actions(hass, farmbot_credentials, mock_farmbot):
+    """Test peripheral switch and coordinate number call correct methods."""
     await setup_integration(hass, farmbot_credentials)
 
     await hass.services.async_call(
@@ -93,6 +89,8 @@ async def test_switch_and_number_actions(hass, farmbot_credentials, mock_farmbot
         blocking=True,
     )
 
+    mock_farmbot.write_pin.assert_called()
+
     await hass.services.async_call(
         NUMBER_DOMAIN,
         "set_value",
@@ -100,7 +98,7 @@ async def test_switch_and_number_actions(hass, farmbot_credentials, mock_farmbot
         blocking=True,
     )
 
-    assert aioclient_mock.mock_calls
+    mock_farmbot.move.assert_called()
 
 
 async def test_sequences_list_attributes(hass, farmbot_credentials, mock_farmbot):
