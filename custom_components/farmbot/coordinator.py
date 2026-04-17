@@ -32,6 +32,8 @@ from .const import (
     SERVICE_KIND_MOVE_ABSOLUTE,
     SERVICE_KIND_TAKE_PHOTO,
     SERVICE_KIND_WRITE_PIN,
+    SERVICE_KIND_FIND_HOME,
+    SERVICE_KIND_SYNC,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -117,6 +119,14 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_take_photo(self) -> None:
         """Trigger take photo action."""
         await self.async_run_celery_script(SERVICE_KIND_TAKE_PHOTO, {})
+
+    async def async_find_home(self) -> None:
+        """Execute find home (homing) command."""
+        await self.async_run_celery_script(SERVICE_KIND_FIND_HOME, {"speed": 100, "axis": "all"})
+
+    async def async_sync(self) -> None:
+        """Trigger a sync."""
+        await self.async_run_celery_script(SERVICE_KIND_SYNC, {})
 
     async def async_move_absolute(self, x: float, y: float, z: float) -> None:
         """Move FarmBot to an absolute XYZ target."""
