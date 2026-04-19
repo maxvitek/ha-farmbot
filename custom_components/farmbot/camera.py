@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from io import BytesIO
+import logging
 from typing import Any
 
 from aiohttp import ClientError
+
+_LOGGER = logging.getLogger(__name__)
+_MAX_MONTAGE_IMAGES = 30
 
 from homeassistant.components.camera import Camera
 from homeassistant.config_entries import ConfigEntry
@@ -202,15 +206,33 @@ class FarmBotLatestImageCamera(FarmBotEntity, Camera):
         if sweep:
             sweep_key = sweep.get("key")
             if sweep_key and sweep_key == self._cached_sweep_key and self._cached_montage:
+                _LOGGER.debug("Returning cached montage for sweep %s", sweep_key)
                 return self._cached_montage
 
-            composed = await self._async_generate_montage(sweep["images"])
+            images = sweep["images"]
+            if len(images) > _MAX_MONTAGE_IMAGES:
+                _LOGGER.warning(
+                    "Sweep has %d images (max %d) — using latest %d for montage",
+                    len(images), _MAX_MONTAGE_IMAGES, _MAX_MONTAGE_IMAGES,
+                )
+                images = images[-_MAX_MONTAGE_IMAGES:]
+
+            _LOGGER.info("Generating montage from %d images", len(images))
+            try:
+                composed = await self._async_generate_montage(images)
+            except Exception:
+                _LOGGER.exception("Montage generation failed")
+                composed = None
+
             if composed is not None:
                 montage_bytes, grid_size = composed
                 self._cached_sweep_key = sweep_key
                 self._cached_montage = montage_bytes
                 self._cached_grid_size = grid_size
+                _LOGGER.info("Montage generated: %d bytes, grid %s", len(montage_bytes), grid_size)
                 return montage_bytes
+            else:
+                _LOGGER.warning("Montage generation failed, falling back to single image")
 
         image_url = self._image_url
         if not image_url:
