@@ -78,16 +78,19 @@ class FarmBotSequencesListSensor(FarmBotEntity, SensorEntity):
         self.entity_id = "sensor.farmbot_sequences_list"
 
     @property
-    def native_value(self) -> str:
-        """Return a comma-separated sequence list for backward compatibility."""
-        names = [item.get("name", "") for item in self.coordinator.data.get("sequences", [])]
-        names = [name for name in names if name]
-        return ", ".join(names)
+    def native_value(self) -> int:
+        """Return count of sequences (full list in attributes)."""
+        return len(self.coordinator.data.get("sequences", []))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return full sequence details."""
-        return {ATTR_SEQUENCES: self.coordinator.data.get("sequences", [])}
+        """Return sequence summary (name, id, color only — no body/steps to stay under 16KB)."""
+        sequences = self.coordinator.data.get("sequences", [])
+        summary = [
+            {"id": s.get("id"), "name": s.get("name"), "color": s.get("color")}
+            for s in sequences
+        ]
+        return {ATTR_SEQUENCES: summary}
 
 
 class FarmBotSoilReadingSensor(FarmBotEntity, SensorEntity):
