@@ -113,36 +113,65 @@ class FarmBotLatestImageCamera(FarmBotEntity, Camera):
 
     @staticmethod
     def _compose_montage(tiles: list[tuple[tuple[float, float], bytes]]) -> tuple[bytes, list[int]] | None:
+        """Compose a proportionally-placed montage from geo-located image tiles.
+
+        Images are placed on a canvas proportional to their real-world X/Y
+        coordinates.  Each image is sized so that adjacent photos (at the
+        minimum observed spacing) tile without gaps.  The canvas is capped
+        at 4096 px on the long edge to keep the result manageable.
+        """
         try:
             from PIL import Image
         except ImportError:
             return None
 
-        x_values = sorted({xy[0] for xy, _ in tiles})
-        y_values = sorted({xy[1] for xy, _ in tiles})
-        if not x_values or not y_values:
+        if not tiles:
             return None
 
-        x_index = {x: idx for idx, x in enumerate(x_values)}
-        y_index = {y: idx for idx, y in enumerate(y_values)}
-        cell_width = 320
-        cell_height = 240
-        montage = Image.new(
-            "RGB",
-            (len(x_values) * cell_width, len(y_values) * cell_height),
-        )
+        xs = [xy[0] for xy, _ in tiles]
+        ys = [xy[1] for xy, _ in tiles]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        x_span = x_max - x_min
+        y_span = y_max - y_min
+
+        if x_span == 0 and y_span == 0:
+            # All images at the same coordinate — just return the first one
+            return tiles[0][1], [1, 1]
+
+        # Estimate cell size from minimum spacing between distinct coordinates
+        unique_xs = sorted(set(xs))
+        unique_ys = sorted(set(ys))
+        x_gaps = [unique_xs[i + 1] - unique_xs[i] for i in range(len(unique_xs) - 1)] if len(unique_xs) > 1 else []
+        y_gaps = [unique_ys[i + 1] - unique_ys[i] for i in range(len(unique_ys) - 1)] if len(unique_ys) > 1 else []
+        x_step = min(x_gaps) if x_gaps else x_span or 1
+        y_step = min(y_gaps) if y_gaps else y_span or 1
+
+        # Calculate grid in terms of steps
+        cols = int(round(x_span / x_step)) + 1 if x_step else 1
+        rows = int(round(y_span / y_step)) + 1 if y_step else 1
+
+        # Cap output size
+        max_edge = 4096
+        cell_width = max(16, min(320, max_edge // max(cols, 1)))
+        cell_height = max(16, min(240, max_edge // max(rows, 1)))
+
+        canvas_w = cols * cell_width
+        canvas_h = rows * cell_height
+        montage = Image.new("RGB", (canvas_w, canvas_h))
 
         for xy, image_bytes in tiles:
+            col = int(round((xy[0] - x_min) / x_step)) if x_step else 0
+            row = int(round((xy[1] - y_min) / y_step)) if y_step else 0
+            col = min(col, cols - 1)
+            row = min(row, rows - 1)
             with Image.open(BytesIO(image_bytes)) as image:
                 normalized = image.convert("RGB").resize((cell_width, cell_height))
-                montage.paste(
-                    normalized,
-                    (x_index[xy[0]] * cell_width, y_index[xy[1]] * cell_height),
-                )
+                montage.paste(normalized, (col * cell_width, row * cell_height))
 
         output = BytesIO()
-        montage.save(output, format="JPEG")
-        return output.getvalue(), [len(x_values), len(y_values)]
+        montage.save(output, format="JPEG", quality=85)
+        return output.getvalue(), [cols, rows]
 
     async def _async_generate_montage(self, images: list[dict[str, Any]]) -> tuple[bytes, list[int]] | None:
         download_plan: list[tuple[tuple[float, float], str]] = []
