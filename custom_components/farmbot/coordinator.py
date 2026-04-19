@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -18,6 +18,8 @@ from homeassistant.util import slugify
 from .const import CONF_SERVER, DEFAULT_UPDATE_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+_SWEEP_MAX_GAP = timedelta(minutes=5)
+_SWEEP_MIN_IMAGE_COUNT = 5
 
 
 class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -199,6 +201,73 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 latest[key] = r
         return latest
 
+    @staticmethod
+    def _parse_created_at(timestamp: Any) -> datetime | None:
+        """Parse an image timestamp into a timezone-aware datetime."""
+        if not isinstance(timestamp, str) or not timestamp:
+            return None
+        try:
+            normalized = timestamp.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _latest_sweep(cls, images: Any) -> dict[str, Any] | None:
+        """Return metadata for the most recent image sweep."""
+        if not isinstance(images, list):
+            return None
+
+        stamped: list[tuple[datetime, dict[str, Any]]] = []
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            created_at = cls._parse_created_at(image.get("created_at"))
+            if created_at is None:
+                continue
+            stamped.append((created_at, image))
+
+        if not stamped:
+            return None
+
+        stamped.sort(key=lambda item: item[0])
+        groups: list[list[tuple[datetime, dict[str, Any]]]] = []
+        current_group: list[tuple[datetime, dict[str, Any]]] = []
+
+        for created_at, image in stamped:
+            if not current_group:
+                current_group = [(created_at, image)]
+                continue
+
+            previous_created_at = current_group[-1][0]
+            if created_at - previous_created_at < _SWEEP_MAX_GAP:
+                current_group.append((created_at, image))
+            else:
+                groups.append(current_group)
+                current_group = [(created_at, image)]
+
+        if current_group:
+            groups.append(current_group)
+
+        candidates = [group for group in groups if len(group) >= _SWEEP_MIN_IMAGE_COUNT]
+        if not candidates:
+            return None
+
+        latest_group = candidates[-1]
+        first_created_at = latest_group[0][0]
+        last_created_at = latest_group[-1][0]
+        sweep_images = [image for _, image in latest_group]
+
+        return {
+            "key": f"{first_created_at.isoformat()}::{last_created_at.isoformat()}::{len(sweep_images)}",
+            "images": sweep_images,
+            "sweep_date": last_created_at.date().isoformat(),
+            "image_count": len(sweep_images),
+        }
+
     # --- Main update ---
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -233,6 +302,7 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "peripherals": self._extract_peripherals(device),
             "images": images if isinstance(images, list) else [],
             "latest_image": self._latest_image(images),
+            "latest_sweep": self._latest_sweep(images),
             "soil_readings": self._latest_soil_readings(sensor_readings),
             "fbos_version": (device or {}).get("fbos_version") or (device or {}).get("os_version"),
             "firmware_version": (device or {}).get("firmware_version") or (device or {}).get("firmware_hardware"),

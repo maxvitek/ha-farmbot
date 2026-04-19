@@ -7,7 +7,7 @@
   "iot_class": "cloud_polling",
   "loggers": ["farmbot"],
   "quality_scale": "bronze",
-  "requirements": ["farmbot>=2.0.0"],
+  "requirements": ["farmbot>=2.0.0", "Pillow>=10.0.0"],
   "config_flow": true,
   "integration_type": "hub"
 }
