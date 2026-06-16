@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+from custom_components.farmbot.coordinator import FarmBotDataUpdateCoordinator
+
 from .common import setup_integration
 
 
@@ -36,3 +40,17 @@ async def test_coordinator_refreshes_token_on_auth_failure(hass, farmbot_credent
 
     assert mock_farmbot.get_token.call_count >= 2
     assert coordinator.data["connected"] is True
+
+
+def test_connected_uses_recent_last_saw_api_when_no_online_flag():
+    """FarmBot API exposes last_saw_api instead of a boolean online flag."""
+    recent = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+
+    assert FarmBotDataUpdateCoordinator._extract_connected({"last_saw_api": recent}) is True
+
+
+def test_connected_rejects_stale_last_saw_api_when_no_online_flag():
+    """Stale API check-ins should not report the bot as connected."""
+    stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+    assert FarmBotDataUpdateCoordinator._extract_connected({"last_saw_api": stale}) is False

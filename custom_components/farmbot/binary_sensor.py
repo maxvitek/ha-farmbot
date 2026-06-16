@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -37,6 +39,14 @@ class FarmBotConnectedBinarySensor(FarmBotEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Return true if connected."""
         return bool(self.coordinator.data.get("connected", False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return connection diagnostic details."""
+        last_saw_api = self.coordinator.data.get("last_saw_api")
+        if last_saw_api is None:
+            return None
+        return {"last_saw_api": last_saw_api}
 
 
 class FarmBotEstoppedBinarySensor(FarmBotEntity, BinarySensorEntity):

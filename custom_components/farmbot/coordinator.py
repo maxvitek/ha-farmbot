@@ -20,6 +20,7 @@ from .const import CONF_SERVER, DEFAULT_UPDATE_INTERVAL, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 _SWEEP_MAX_GAP = timedelta(minutes=5)
 _SWEEP_MIN_IMAGE_COUNT = 5
+_CONNECTED_LAST_SEEN_MAX_AGE = timedelta(minutes=10)
 
 
 class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -136,13 +137,36 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return [item for item in raw if isinstance(item, dict) and item.get("name")]
 
     @staticmethod
-    def _extract_connected(device: Any) -> bool:
+    def _parse_timestamp(timestamp: Any) -> datetime | None:
+        """Parse an API timestamp into a timezone-aware UTC datetime."""
+        if not isinstance(timestamp, str) or not timestamp:
+            return None
+        try:
+            normalized = timestamp.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _extract_connected(cls, device: Any) -> bool:
         if not isinstance(device, dict):
             return False
         for key in ("is_connected", "online"):
             if key in device:
                 return bool(device[key])
-        return False
+
+        # FarmBot's current /api/device response does not include a dedicated
+        # online flag. Use the bot's most recent API check-in as the fallback
+        # signal so the HA connectivity sensor reflects the real device state
+        # instead of staying permanently disconnected.
+        last_saw_api = cls._parse_timestamp(device.get("last_saw_api"))
+        if last_saw_api is None:
+            return False
+        age = datetime.now(timezone.utc) - last_saw_api
+        return timedelta(0) <= age <= _CONNECTED_LAST_SEEN_MAX_AGE
 
     @staticmethod
     def _extract_estopped(device: Any) -> bool:
@@ -201,19 +225,10 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 latest[key] = r
         return latest
 
-    @staticmethod
-    def _parse_created_at(timestamp: Any) -> datetime | None:
+    @classmethod
+    def _parse_created_at(cls, timestamp: Any) -> datetime | None:
         """Parse an image timestamp into a timezone-aware datetime."""
-        if not isinstance(timestamp, str) or not timestamp:
-            return None
-        try:
-            normalized = timestamp.replace("Z", "+00:00")
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        except ValueError:
-            return None
+        return cls._parse_timestamp(timestamp)
 
     @classmethod
     def _latest_sweep(cls, images: Any) -> dict[str, Any] | None:
@@ -298,6 +313,7 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "z": self._coerce_float(position_data.get("z")),
             },
             "connected": self._extract_connected(device),
+            "last_saw_api": (device or {}).get("last_saw_api"),
             "estopped": self._extract_estopped(device),
             "peripherals": self._extract_peripherals(device),
             "images": images if isinstance(images, list) else [],

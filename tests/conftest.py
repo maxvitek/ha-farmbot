@@ -19,6 +19,7 @@ def _api_get(endpoint: str):
             "is_connected": True,
             "is_emergency_lock": False,
             "fbos_version": "14.2.0",
+            "last_saw_api": "2026-01-02T00:00:00Z",
             "firmware_version": "10.1.0",
             "peripherals": [
                 {"id": 101, "label": "Water Valve", "pin_number": 8, "value": 1},
