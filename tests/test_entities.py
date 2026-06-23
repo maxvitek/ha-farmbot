@@ -64,6 +64,46 @@ async def test_sequence_button_press_calls_sequence(hass, farmbot_credentials, m
     mock_farmbot.sequence.assert_any_call("Water Everything")
 
 
+async def test_sequence_button_uses_fresh_broker_client(hass, farmbot_credentials, mock_farmbot):
+    """Sequence presses should not reuse a stale farmbot-py MQTT client."""
+    stale_client = object()
+    mock_farmbot.broker.client = stale_client
+
+    await setup_integration(hass, farmbot_credentials)
+
+    await hass.services.async_call(
+        BUTTON_DOMAIN,
+        "press",
+        {"entity_id": "button.farmbot_run_water_everything"},
+        blocking=True,
+    )
+
+    mock_farmbot.disconnect_broker.assert_called()
+    assert mock_farmbot.broker.client is None
+
+
+async def test_sequence_button_raises_farmbot_library_errors(hass, farmbot_credentials, mock_farmbot):
+    """farmbot-py stores RPC failures in state.error; surface them to HA."""
+    await setup_integration(hass, farmbot_credentials)
+
+    def _sequence_failure(_name):
+        mock_farmbot.state.error = "Timed out waiting for RPC response."
+
+    mock_farmbot.sequence.side_effect = _sequence_failure
+
+    try:
+        await hass.services.async_call(
+            BUTTON_DOMAIN,
+            "press",
+            {"entity_id": "button.farmbot_run_water_everything"},
+            blocking=True,
+        )
+    except Exception as err:
+        assert "Timed out waiting for RPC response" in str(err)
+    else:
+        raise AssertionError("FarmBot RPC failure was not surfaced")
+
+
 async def test_find_home_action_button(hass, farmbot_credentials, mock_farmbot):
     """Test built-in Find Home button calls find_home on Farmbot instance."""
     await setup_integration(hass, farmbot_credentials)

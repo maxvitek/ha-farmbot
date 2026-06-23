@@ -68,6 +68,8 @@ def farmbot_credentials() -> dict[str, str]:
 def mock_farmbot():
     """Mock the Farmbot class from the farmbot library."""
     mock_instance = MagicMock()
+    mock_instance.state.error = None
+    mock_instance.broker.client = None
     mock_instance.get_token.return_value = "token-1"
     mock_instance.set_token.return_value = None
     mock_instance.get_xyz.return_value = {"x": 100.0, "y": 200.0, "z": -10.0}

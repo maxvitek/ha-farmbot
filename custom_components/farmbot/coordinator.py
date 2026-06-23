@@ -36,6 +36,7 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._fb = Farmbot()
         self._token: str | None = None
         self._api_lock = asyncio.Lock()
+        self._command_lock = asyncio.Lock()
 
         update_interval = timedelta(
             seconds=entry.options.get("update_interval", DEFAULT_UPDATE_INTERVAL)
@@ -71,12 +72,48 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         message = str(err).lower()
         return any(term in message for term in ("401", "403", "unauthorized", "forbidden", "token"))
 
+    def _sync_disconnect_broker_client(self) -> None:
+        """Disconnect and discard the FarmBot MQTT client.
+
+        farmbot-py leaves its broker client object in place after stopping the
+        network loop. A later publish can then reuse a stale client, which makes
+        Home Assistant button presses look successful while no RPC reaches the
+        bot. Force a fresh MQTT connection for each real-time command.
+        """
+        broker = getattr(self._fb, "broker", None)
+        client = getattr(broker, "client", None)
+        if client is None:
+            return
+        try:
+            self._fb.disconnect_broker()
+        except Exception as err:  # pragma: no cover - best effort cleanup
+            _LOGGER.debug("Error disconnecting FarmBot broker client: %s", err)
+        finally:
+            try:
+                broker.client = None
+            except Exception:  # pragma: no cover - defensive for library changes
+                pass
+
+    def _sync_farmbot_call(self, method_name: str, *args: Any) -> Any:
+        """Execute a FarmBot library method and convert silent errors to exceptions."""
+        state = getattr(self._fb, "state", None)
+        if state is not None:
+            state.error = None
+
+        result = getattr(self._fb, method_name)(*args)
+
+        error = getattr(state, "error", None) if state is not None else None
+        if error:
+            raise RuntimeError(f"FarmBot {method_name} failed: {error}")
+        return result
+
     async def _async_api_call(self, method_name: str, *args: Any) -> Any:
         """Execute a Farmbot method, refreshing token once on auth failures."""
         await self._async_ensure_token()
-        func = getattr(self._fb, method_name)
         try:
-            return await self.hass.async_add_executor_job(func, *args)
+            return await self.hass.async_add_executor_job(
+                self._sync_farmbot_call, method_name, *args
+            )
         except Exception as err:
             if not self._is_auth_error(err):
                 raise
@@ -84,42 +121,52 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             async with self._api_lock:
                 self._token = None
                 await self._async_refresh_token()
-            func = getattr(self._fb, method_name)
-            return await self.hass.async_add_executor_job(func, *args)
+            return await self.hass.async_add_executor_job(
+                self._sync_farmbot_call, method_name, *args
+            )
+
+    async def _async_realtime_call(self, method_name: str, *args: Any) -> Any:
+        """Execute a broker/RPC command using a fresh MQTT client."""
+        async with self._command_lock:
+            await self.hass.async_add_executor_job(self._sync_disconnect_broker_client)
+            try:
+                return await self._async_api_call(method_name, *args)
+            finally:
+                await self.hass.async_add_executor_job(self._sync_disconnect_broker_client)
 
     # --- Action methods ---
 
     async def async_execute_sequence(self, sequence_name: str) -> None:
         """Run a named FarmBot sequence."""
-        await self._async_api_call("sequence", sequence_name)
+        await self._async_realtime_call("sequence", sequence_name)
 
     async def async_find_home(self) -> None:
         """Execute find home (homing) command."""
-        await self._async_api_call("find_home")
+        await self._async_realtime_call("find_home")
 
     async def async_emergency_lock(self) -> None:
         """Trigger e-stop."""
-        await self._async_api_call("e_stop")
+        await self._async_realtime_call("e_stop")
 
     async def async_emergency_unlock(self) -> None:
         """Clear e-stop."""
-        await self._async_api_call("unlock")
+        await self._async_realtime_call("unlock")
 
     async def async_take_photo(self) -> None:
         """Trigger take photo."""
-        await self._async_api_call("take_photo")
+        await self._async_realtime_call("take_photo")
 
     async def async_sync(self) -> None:
         """Trigger a sync (read_status refreshes the bot state)."""
-        await self._async_api_call("read_status")
+        await self._async_realtime_call("read_status")
 
     async def async_move_absolute(self, x: float, y: float, z: float) -> None:
         """Move FarmBot to an absolute XYZ target."""
-        await self._async_api_call("move", x, y, z)
+        await self._async_realtime_call("move", x, y, z)
 
     async def async_set_peripheral(self, pin_number: int, value: bool) -> None:
         """Set a peripheral output pin."""
-        await self._async_api_call("write_pin", pin_number, 1 if value else 0, 0)
+        await self._async_realtime_call("write_pin", pin_number, 1 if value else 0, 0)
 
     # --- Data parsing helpers ---
 
