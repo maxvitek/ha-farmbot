@@ -1,10 +1,10 @@
 [project]
 name = "ha-farmbot"
-version = "0.1.0"
+version = "0.1.1"
 description = "Home Assistant custom integration for FarmBot"
 requires-python = ">=3.12"
 license = {text = "MIT"}
-authors = [{name = "Max Vitek", email = "maxvitek@gmail.com"}]
+authors = [{name = "Max Vitek"}]
 
 [project.optional-dependencies]
 dev = [
