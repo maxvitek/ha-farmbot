@@ -72,27 +72,47 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         message = str(err).lower()
         return any(term in message for term in ("401", "403", "unauthorized", "forbidden", "token"))
 
-    def _sync_disconnect_broker_client(self) -> None:
-        """Disconnect and discard the FarmBot MQTT client.
+    def _sync_disconnect_broker_clients(self) -> None:
+        """Disconnect and discard all FarmBot MQTT clients.
 
-        farmbot-py leaves its broker client object in place after stopping the
-        network loop. A later publish can then reuse a stale client, which makes
-        Home Assistant button presses look successful while no RPC reaches the
-        bot. Force a fresh MQTT connection for each real-time command.
+        farmbot-py creates separate BrokerConnect instances for each command
+        group (resources/sequences, camera, movements, peripherals, etc.). A
+        stale client on any one of those nested brokers can make that command
+        class look successful in Home Assistant while no RPC reaches the bot.
+        Force every broker client to be fresh for each real-time command.
         """
-        broker = getattr(self._fb, "broker", None)
-        client = getattr(broker, "client", None)
-        if client is None:
-            return
-        try:
-            self._fb.disconnect_broker()
-        except Exception as err:  # pragma: no cover - best effort cleanup
-            _LOGGER.debug("Error disconnecting FarmBot broker client: %s", err)
-        finally:
+        seen: set[int] = set()
+
+        for owner_name in (
+            "broker",
+            "basic",
+            "camera",
+            "info",
+            "jobs",
+            "messages",
+            "movements",
+            "peripherals",
+            "resources",
+            "tools",
+        ):
+            owner = getattr(self._fb, owner_name, None)
+            broker = owner if owner_name == "broker" else getattr(owner, "broker", None)
+            if broker is None or id(broker) in seen:
+                continue
+            seen.add(id(broker))
+
+            client = getattr(broker, "client", None)
+            if client is None:
+                continue
             try:
-                broker.client = None
-            except Exception:  # pragma: no cover - defensive for library changes
-                pass
+                broker.disconnect()
+            except Exception as err:  # pragma: no cover - best effort cleanup
+                _LOGGER.debug("Error disconnecting FarmBot %s broker client: %s", owner_name, err)
+            finally:
+                try:
+                    broker.client = None
+                except Exception:  # pragma: no cover - defensive for library changes
+                    pass
 
     def _sync_farmbot_call(self, method_name: str, *args: Any) -> Any:
         """Execute a FarmBot library method and convert silent errors to exceptions."""
@@ -128,11 +148,11 @@ class FarmBotDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_realtime_call(self, method_name: str, *args: Any) -> Any:
         """Execute a broker/RPC command using a fresh MQTT client."""
         async with self._command_lock:
-            await self.hass.async_add_executor_job(self._sync_disconnect_broker_client)
+            await self.hass.async_add_executor_job(self._sync_disconnect_broker_clients)
             try:
                 return await self._async_api_call(method_name, *args)
             finally:
-                await self.hass.async_add_executor_job(self._sync_disconnect_broker_client)
+                await self.hass.async_add_executor_job(self._sync_disconnect_broker_clients)
 
     # --- Action methods ---
 

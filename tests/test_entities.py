@@ -64,10 +64,12 @@ async def test_sequence_button_press_calls_sequence(hass, farmbot_credentials, m
     mock_farmbot.sequence.assert_any_call("Water Everything")
 
 
-async def test_sequence_button_uses_fresh_broker_client(hass, farmbot_credentials, mock_farmbot):
-    """Sequence presses should not reuse a stale farmbot-py MQTT client."""
-    stale_client = object()
-    mock_farmbot.broker.client = stale_client
+async def test_sequence_button_uses_fresh_nested_broker_client(hass, farmbot_credentials, mock_farmbot):
+    """Sequence presses should not reuse a stale nested farmbot-py MQTT client."""
+    stale_sequence_client = object()
+    stale_camera_client = object()
+    mock_farmbot.resources.broker.client = stale_sequence_client
+    mock_farmbot.camera.broker.client = stale_camera_client
 
     await setup_integration(hass, farmbot_credentials)
 
@@ -78,8 +80,10 @@ async def test_sequence_button_uses_fresh_broker_client(hass, farmbot_credential
         blocking=True,
     )
 
-    mock_farmbot.disconnect_broker.assert_called()
-    assert mock_farmbot.broker.client is None
+    mock_farmbot.resources.broker.disconnect.assert_called()
+    mock_farmbot.camera.broker.disconnect.assert_called()
+    assert mock_farmbot.resources.broker.client is None
+    assert mock_farmbot.camera.broker.client is None
 
 
 async def test_sequence_button_raises_farmbot_library_errors(hass, farmbot_credentials, mock_farmbot):
