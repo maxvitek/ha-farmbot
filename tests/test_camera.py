@@ -122,3 +122,37 @@ async def test_camera_falls_back_to_latest_image_when_montage_fails(
     image = await async_get_image(hass, "camera.farmbot_latest_image")
 
     assert image.content == b"single-latest"
+
+
+def test_montage_tolerates_position_jitter():
+    """Sub-mm FarmBot position jitter must not explode the montage canvas.
+
+    Real sweep data has x=1266.6 vs 1266.2 for the same column; treating the
+    0.4 mm gap as the grid step produced a multi-GB canvas and OOM-killed HA.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    from custom_components.farmbot.camera import FarmBotLatestImageCamera
+
+    buf = BytesIO()
+    Image.new("RGB", (1280, 960), (0, 128, 0)).save(buf, format="JPEG")
+    jpeg = buf.getvalue()
+
+    tiles = []
+    for col, x in enumerate((0.0, 450.0, 900.0, 1350.0)):
+        for y in (138.4, 373.8, 608.8, 844.2, 1079.4, 1315.0, 1549.0):
+            jitter = 0.4 if (col + int(y)) % 2 else 0.0
+            tiles.append(((x + jitter, y), jpeg))
+
+    composed = FarmBotLatestImageCamera._compose_montage(tiles)
+    assert composed is not None
+    montage_bytes, grid = composed
+    assert grid == [4, 7]
+    with Image.open(BytesIO(montage_bytes)) as montage:
+        assert montage.width <= 4096 and montage.height <= 4096
+        assert montage.size == (4 * 320, 7 * 240)
+    assert FarmBotLatestImageCamera._grid_size_for_sweep(
+        [{"meta": {"x": xy[0], "y": xy[1]}} for xy, _ in tiles]
+    ) == [4, 7]

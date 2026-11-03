@@ -10,6 +10,10 @@ from aiohttp import ClientError
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_MONTAGE_IMAGES = 30
+# FarmBot reports photo positions with sub-mm jitter (e.g. x=1266.6 vs 1266.2);
+# positions closer than this (mm) are the same grid line.
+_GRID_TOLERANCE_MM = 10.0
+_MAX_CANVAS_EDGE = 4096
 
 from homeassistant.components.camera import Camera
 from homeassistant.config_entries import ConfigEntry
@@ -94,16 +98,31 @@ class FarmBotLatestImageCamera(FarmBotEntity, Camera):
         except (KeyError, TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _grid_lines(values: list[float]) -> list[float]:
+        """Cluster jittery coordinates into grid lines (one per photo row/column)."""
+        lines: list[list[float]] = []
+        for value in sorted(values):
+            if lines and value - lines[-1][-1] <= _GRID_TOLERANCE_MM:
+                lines[-1].append(value)
+            else:
+                lines.append([value])
+        return [sum(line) / len(line) for line in lines]
+
+    @staticmethod
+    def _nearest_index(lines: list[float], value: float) -> int:
+        return min(range(len(lines)), key=lambda i: abs(lines[i] - value))
+
     @classmethod
     def _grid_size_for_sweep(cls, images: list[dict[str, Any]]) -> list[int] | None:
         coordinates = [cls._extract_xy(image) for image in images]
         if any(coord is None for coord in coordinates):
             return None
-        x_values = sorted({coord[0] for coord in coordinates if coord is not None})
-        y_values = sorted({coord[1] for coord in coordinates if coord is not None})
-        if not x_values or not y_values:
+        x_lines = cls._grid_lines([coord[0] for coord in coordinates if coord is not None])
+        y_lines = cls._grid_lines([coord[1] for coord in coordinates if coord is not None])
+        if not x_lines or not y_lines:
             return None
-        return [len(x_values), len(y_values)]
+        return [len(x_lines), len(y_lines)]
 
     async def _async_fetch_image(self, url: str) -> bytes | None:
         session = async_get_clientsession(self.hass)
@@ -115,14 +134,14 @@ class FarmBotLatestImageCamera(FarmBotEntity, Camera):
         except ClientError:
             return None
 
-    @staticmethod
-    def _compose_montage(tiles: list[tuple[tuple[float, float], bytes]]) -> tuple[bytes, list[int]] | None:
-        """Compose a proportionally-placed montage from geo-located image tiles.
+    @classmethod
+    def _compose_montage(cls, tiles: list[tuple[tuple[float, float], bytes]]) -> tuple[bytes, list[int]] | None:
+        """Compose a montage from geo-located image tiles.
 
-        Images are placed on a canvas proportional to their real-world X/Y
-        coordinates.  Each image is sized so that adjacent photos (at the
-        minimum observed spacing) tile without gaps.  The canvas is capped
-        at 4096 px on the long edge to keep the result manageable.
+        Coordinates are clustered into grid lines (tolerating FarmBot's position
+        jitter) and each photo is placed by its row/column index.  The grid is
+        therefore at most one cell per photo in each direction, and the canvas
+        is capped at _MAX_CANVAS_EDGE px per edge (~50 MB RGB worst case).
         """
         try:
             from PIL import Image
@@ -132,44 +151,28 @@ class FarmBotLatestImageCamera(FarmBotEntity, Camera):
         if not tiles:
             return None
 
-        xs = [xy[0] for xy, _ in tiles]
-        ys = [xy[1] for xy, _ in tiles]
-        x_min, x_max = min(xs), max(xs)
-        y_min, y_max = min(ys), max(ys)
-        x_span = x_max - x_min
-        y_span = y_max - y_min
+        x_lines = cls._grid_lines([xy[0] for xy, _ in tiles])
+        y_lines = cls._grid_lines([xy[1] for xy, _ in tiles])
+        cols, rows = len(x_lines), len(y_lines)
 
-        if x_span == 0 and y_span == 0:
-            # All images at the same coordinate — just return the first one
+        if cols == 1 and rows == 1:
+            # All images at the same spot — just return the first one
             return tiles[0][1], [1, 1]
 
-        # Estimate cell size from minimum spacing between distinct coordinates
-        unique_xs = sorted(set(xs))
-        unique_ys = sorted(set(ys))
-        x_gaps = [unique_xs[i + 1] - unique_xs[i] for i in range(len(unique_xs) - 1)] if len(unique_xs) > 1 else []
-        y_gaps = [unique_ys[i + 1] - unique_ys[i] for i in range(len(unique_ys) - 1)] if len(unique_ys) > 1 else []
-        x_step = min(x_gaps) if x_gaps else x_span or 1
-        y_step = min(y_gaps) if y_gaps else y_span or 1
-
-        # Calculate grid in terms of steps
-        cols = int(round(x_span / x_step)) + 1 if x_step else 1
-        rows = int(round(y_span / y_step)) + 1 if y_step else 1
-
-        # Cap output size
-        max_edge = 4096
-        cell_width = max(16, min(320, max_edge // max(cols, 1)))
-        cell_height = max(16, min(240, max_edge // max(rows, 1)))
-
+        cell_width = max(1, min(320, _MAX_CANVAS_EDGE // cols))
+        cell_height = max(1, min(240, _MAX_CANVAS_EDGE // rows))
         canvas_w = cols * cell_width
         canvas_h = rows * cell_height
+        if canvas_w > _MAX_CANVAS_EDGE or canvas_h > _MAX_CANVAS_EDGE:
+            _LOGGER.warning("Montage grid %sx%s too large, skipping", cols, rows)
+            return None
         montage = Image.new("RGB", (canvas_w, canvas_h))
 
         for xy, image_bytes in tiles:
-            col = int(round((xy[0] - x_min) / x_step)) if x_step else 0
-            row = int(round((xy[1] - y_min) / y_step)) if y_step else 0
-            col = min(col, cols - 1)
-            row = min(row, rows - 1)
+            col = cls._nearest_index(x_lines, xy[0])
+            row = cls._nearest_index(y_lines, xy[1])
             with Image.open(BytesIO(image_bytes)) as image:
+                image.draft("RGB", (cell_width, cell_height))  # JPEG: decode at reduced size
                 normalized = image.convert("RGB").resize((cell_width, cell_height))
                 montage.paste(normalized, (col * cell_width, row * cell_height))
 
